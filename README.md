@@ -7,6 +7,7 @@ PC에서 펜던트처럼 제어하는 GUI와, 티칭 기반 Pick & Place 프로�
 |---|---|
 | `ur5e_move_gui.py` | 메인 GUI: MoveJ / MoveL / 조그 / 그리퍼 / 서보 / 진행률 / 티칭 도구 / Pick & Place 창 |
 | `ur5e_pick_place.py` | Pick & Place 로직 (GUI에서 사용, 터미널 단독 실행도 가능) |
+| `ur5e_cli.py` | 키 하나로 조작하는 터미널 조그 CLI (관절/TCP 조그, 그리퍼, 서보, 원위치, Pick & Place) |
 | `ur5e_go_home.sh` | ROS 액션으로 원위치 복귀하는 간단한 예제 |
 | `ur5e_points.example.json` | 티칭 위치 파일 예시 (`~/ur5e_points.json` 형식) |
 
@@ -94,6 +95,34 @@ ros2 launch ur_calibration calibration_correction.launch.py robot_ip:=192.168.0.
 
 > URScript를 보내면 드라이버의 External Control 프로그램이 중단됩니다.
 > MoveIt이나 ROS 컨트롤러로 다시 제어하려면 GUI의 **[ROS 제어 복구]** 를 누르세요.
+
+## 4-1. 터미널 CLI (`ur5e_cli.py`)
+
+GUI 없이 터미널에서 키 하나로 조작합니다. 화면 맨 아래 줄에 상태가 실시간으로 표시됩니다.
+
+```bash
+python3 ur5e_cli.py
+```
+
+```
+┌───────────────── UR5e CLI (192.168.0.9) ──────────────────┐
+│ 관절 조그  1 2 3 4 5 6 = J1~J6 +    q w e r t y = J1~J6 - │
+│ TCP 조그   a s d = X+ Y+ Z+         z x c = X- Y- Z-      │
+│ 스텝       - 작게   = 크게           f 기준 Base/Tool     │
+│ 그리퍼     g 활성화   o 열기   p 닫기                     │
+│ 서보       n ON   m OFF   b 보호정지 해제                 │
+│ 원위치     h 이동   j 현재 위치를 home 저장               │
+│ 기타       v 속도%   k Pick&Place   i 정보   ? 도움말     │
+│ 정지/종료  Space 정지         Esc / Ctrl+C 종료           │
+└───────────────────────────────────────────────────────────┘
+[RUNNING|NORMAL] J: -89.5 -89.9 -90.3 -89.8 90.1 -0.2 | TCP:-129.0 -492.5 313.1mm | G3 | 스텝 2°/5mm base | 속도 - | 정지
+```
+
+- 키 1회 = 1스텝 이동. 관절 스텝은 0.5/1/2/5/10°, 직선 스텝은 1/2/5/10/20mm이고, `-` / `=` 로 같이 바뀝니다.
+- 조그 속도: 관절 15°/s, 직선 50mm/s (여기에 속도 슬라이더 비율이 곱해짐)
+- 서보 OFF, 안전 상태 이상, Pick & Place 실행 중에는 조그를 거부합니다.
+- 원위치 이동, home 저장, 서보 OFF, 그리퍼 활성화, Pick & Place는 `y` 확인 후 실행합니다.
+- 종료할 때 로봇이 움직이고 있으면 정지 명령을 보냅니다.
 
 ## 5. 티칭 → Pick & Place
 
