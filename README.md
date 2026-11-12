@@ -28,13 +28,15 @@ sudo apt install ros-humble-ur ros-humble-moveit
 
 | 장비 | IP |
 |---|---|
-| UR5e 컨트롤러 | `192.168.0.9` |
-| PC (`eno1`) | `192.168.0.201/24` |
+| UR5e 컨트롤러 | `192.168.77.9` |
+| PC (`eno1`) | `192.168.77.201/24` |
+
+> 2026-11-12: Wi-Fi 대역(192.168.0.x)과 겹쳐서 `192.168.0.9 / 192.168.0.201` 에서 `192.168.77.x` 로 변경.
 
 로봇 IP 확인: 펜던트 ☰ → 정보, 또는 ☰ → 설정 → 시스템 → 네트워크
 
 ```bash
-ping 192.168.0.9
+ping 192.168.77.9
 # 사용 포트: 29999(Dashboard) 30001~30004(Primary/Secondary/RTDE) 63352(Robotiq)
 ```
 
@@ -45,7 +47,7 @@ ping 192.168.0.9
 ```bash
 # 터미널 1: 드라이버 (Remote Control 모드 → headless_mode 사용, URCap/펜던트 프로그램 불필요)
 source /opt/ros/humble/setup.bash
-ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5e robot_ip:=192.168.0.9 headless_mode:=true
+ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5e robot_ip:=192.168.77.9 headless_mode:=true
 
 # 터미널 2: GUI
 source /opt/ros/humble/setup.bash
@@ -64,7 +66,7 @@ ros2 service call /io_and_status_controller/set_speed_slider ur_msgs/srv/SetSpee
 정확한 TCP를 위해 캘리브레이션 추출을 권장합니다 (드라이버 로그의 calibration mismatch 경고).
 
 ```bash
-ros2 launch ur_calibration calibration_correction.launch.py robot_ip:=192.168.0.9 target_filename:="$HOME/ur5e_calib.yaml"
+ros2 launch ur_calibration calibration_correction.launch.py robot_ip:=192.168.77.9 target_filename:="$HOME/ur5e_calib.yaml"
 ```
 
 ## 4. GUI 기능 (`ur5e_move_gui.py`)
@@ -105,7 +107,7 @@ python3 ur5e_cli.py
 ```
 
 ```
-┌───────────────── UR5e CLI (192.168.0.9) ──────────────────┐
+┌───────────────── UR5e CLI (192.168.77.9) ─────────────────┐
 │ 관절 조그  1 2 3 4 5 6 = J1~J6 +    q w e r t y = J1~J6 - │
 │ TCP 조그   a s d = X+ Y+ Z+         z x c = X- Y- Z-      │
 │ 스텝       - 작게   = 크게           f 기준 Base/Tool     │

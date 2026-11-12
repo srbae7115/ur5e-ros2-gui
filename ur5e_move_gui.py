@@ -35,7 +35,7 @@ JOINTS = ["shoulder_pan_joint", "shoulder_lift_joint", "elbow_joint",
 JOINT_LABELS = ["Base", "Shoulder", "Elbow", "Wrist1", "Wrist2", "Wrist3"]
 POSE_LABELS = ["X [mm]", "Y [mm]", "Z [mm]", "RX [rad]", "RY [rad]", "RZ [rad]"]
 
-ROBOT_IP = "192.168.0.9"
+ROBOT_IP = "192.168.77.9"
 
 # 드라이버 시작 시점에 기록한 원위치 [rad] (티칭 도구에서 'home'을 저장하면 그 값이 우선)
 HOME_JOINTS = [-1.5623, -1.5682, -1.5762, -1.5672, 1.5724, -0.0027]
@@ -333,7 +333,7 @@ UR5e 제어 GUI 사용 설명서
 
 ■ 시작 순서
   1) 드라이버 실행
-     ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5e robot_ip:=192.168.0.9 headless_mode:=true
+     ros2 launch ur_robot_driver ur_control.launch.py ur_type:=ur5e robot_ip:=192.168.77.9 headless_mode:=true
   2) 이 GUI 실행:  python3 ~/ur5e_move_gui.py
   3) 서보가 OFF면 [서보 ON]
   4) 그리퍼를 쓰려면 [활성화] 한 번
