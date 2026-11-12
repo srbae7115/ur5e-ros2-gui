@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 *.tmp
 ur5e_points.json
+ur5e_points_*.json

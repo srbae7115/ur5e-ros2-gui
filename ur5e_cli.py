@@ -31,7 +31,7 @@ import unicodedata
 import rclpy
 
 from ur5e_move_gui import (URNode, Gripper, Dashboard, App, ROBOT_IP, fmt, load_points, save_points,
-                           home_joints, POINTS_FILE)
+                           home_joints, points_file, robot_serial)
 
 J_STEPS = [0.5, 1, 2, 5, 10]     # 관절 스텝 [deg]
 L_STEPS = [1, 2, 5, 10, 20]      # 직선 스텝 [mm]
@@ -107,12 +107,15 @@ class CLI:
         mv = "이동중" if max(abs(v) for v in n.vel) > 0.005 else "정지"
         if self.pp:
             mv = "P&P 실행중"
-        gtxt = f"G{g.get('POS')}" if g.get("STA") == 3 else ("G미활성" if g.get("connected") else "G-")
+        gtxt = f"G{g.get('POS')}" if g.get("STA") == 3 else ("G미활성" if g.get("connected") else "G없음")
         spd = f"{self.speed}%" if self.speed is not None else "-"
-        return (f"[{d.mode or '-'}|{d.safety or '-'}] J:{j} | TCP:{t}mm | {gtxt} | "
+        return (f"[S/N {d.serial or '?'}|{d.mode or '-'}|{d.safety or '-'}] J:{j} | TCP:{t}mm | {gtxt} | "
                 f"스텝 {J_STEPS[self.step_i]}°/{L_STEPS[self.step_i]}mm {self.frame} | 속도 {spd} | {mv}")
 
     def draw(self):
+        if self.dash.changed_from:
+            self.say(f"⚠ 로봇이 바뀌었습니다: S/N {self.dash.changed_from} → {self.dash.serial} (티칭 위치도 전환)")
+            self.dash.changed_from = None
         width = shutil.get_terminal_size((120, 20)).columns - 1
         with self.lock:
             sys.stdout.write("\r\033[K" + fit(self.status_line(), width))
@@ -182,7 +185,9 @@ class CLI:
         if not self.ready():
             return
         q = home_joints()
-        src = "ur5e_points.json 'home'" if "home" in load_points() else "기본값"
+        if q is None:
+            self.say(f"✖ 이 로봇(S/N {robot_serial()})에 저장된 home이 없습니다 → j 키로 현재 위치를 home으로 저장"); return
+        src = f"S/N {robot_serial()} 의 home"
         diff = max(abs(a - b) for a, b in zip(q, self.n.joints))
         self.say(f"  원위치({src}): " + ", ".join(f"{math.degrees(v):.1f}" for v in q)
                  + f"°   (최대 관절 변화 {math.degrees(diff):.1f}°)")
@@ -194,7 +199,9 @@ class CLI:
     def save_home(self):
         if not (self.n.joints and self.n.tcp):
             self.say("✖ 로봇 상태 수신 없음"); return
-        if not self.confirm(f"  현재 위치를 'home'으로 저장할까요? ({POINTS_FILE})"):
+        if not robot_serial():
+            self.say("✖ 로봇 시리얼 확인 전입니다. 잠시 후 다시 시도"); return
+        if not self.confirm(f"  현재 위치를 S/N {robot_serial()} 의 'home'으로 저장할까요? ({points_file()})"):
             self.say("  취소"); return
         pts = load_points()
         pts["home"] = {"joints": [round(q, 6) for q in self.n.joints], "tcp": [round(v, 6) for v in self.n.tcp],
@@ -203,12 +210,16 @@ class CLI:
         self.say("✔ home 저장")
 
     def gripper(self, pos):
+        if not self.grip.state.get("connected"):
+            self.say("✖ 이 로봇에는 그리퍼가 연결되어 있지 않습니다"); return
         if self.grip.state.get("STA") != 3:
             self.say("✖ 그리퍼 미활성 → g 키로 활성화"); return
         self.grip.move(pos, 128, 50)
         self.say("→ 그리퍼 " + ("열기" if pos == 0 else "닫기 (힘 50)"))
 
     def grip_activate(self):
+        if not self.grip.state.get("connected"):
+            self.say("✖ 이 로봇에는 그리퍼가 연결되어 있지 않습니다"); return
         if self.confirm("  그리퍼를 활성화할까요? (손가락이 한 번 닫혔다 열림)"):
             self.grip.activate(); self.say("→ 그리퍼 활성화")
 
@@ -255,16 +266,18 @@ class CLI:
         self.say(f"  원격제어 {q('is in remote control')} | 프로그램 {q('programState')}")
         self.say(f"  그리퍼 펌웨어 {g('FWV')} | {g('VER')} | 시리얼 {g('SNU')} | OBJ {self.grip.state.get('OBJ')}")
         pts = load_points()
-        self.say(f"  티칭 위치: {', '.join(pts) or '없음'}  ({POINTS_FILE})")
+        self.say(f"  티칭 위치: {', '.join(pts) or '없음'}  ({points_file() or '시리얼 확인 전'})")
 
     def pick_place(self):
         if not self.ready():
             return
         import ur5e_pick_place as ppm
         pts = load_points()
+        if not self.grip.state.get("connected"):
+            self.say("✖ 이 로봇에는 그리퍼가 없어 Pick & Place를 할 수 없습니다"); return
         miss = [k for k in ("home", "pick", "place") if k not in pts]
         if miss:
-            self.say(f"✖ 티칭 위치 없음: {', '.join(miss)} (GUI 티칭 도구에서 저장)"); return
+            self.say(f"✖ S/N {robot_serial()} 의 티칭 위치 없음: {', '.join(miss)} (GUI 티칭 도구에서 저장)"); return
         if not self.confirm("  Pick & Place 1회 실행할까요? (Space로 정지)"):
             self.say("  취소"); return
         self.pp = ppm.PickPlace(self.n, ppm.make_args(), grip=self.grip, dash=self.dash, logger=self.say)

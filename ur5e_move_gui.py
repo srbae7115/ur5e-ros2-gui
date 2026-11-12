@@ -37,13 +37,30 @@ POSE_LABELS = ["X [mm]", "Y [mm]", "Z [mm]", "RX [rad]", "RY [rad]", "RZ [rad]"]
 
 ROBOT_IP = "192.168.77.9"
 
-# 드라이버 시작 시점에 기록한 원위치 [rad] (티칭 도구에서 'home'을 저장하면 그 값이 우선)
-HOME_JOINTS = [-1.5623, -1.5682, -1.5762, -1.5672, 1.5724, -0.0027]
+# ---------- 로봇 구분 ----------
+# 같은 IP를 쓰는 로봇이 여러 대일 수 있으므로(한 번에 1대) Dashboard로 읽은 시리얼 번호로 구분한다.
+# 티칭 위치는 로봇별 파일 ~/ur5e_points_<시리얼>.json 에 저장 → 다른 로봇의 위치로 움직이는 사고 방지.
+_robot_serial = None
+
+
+def set_robot_serial(serial):
+    global _robot_serial
+    _robot_serial = serial
+
+
+def robot_serial():
+    return _robot_serial
+
+
+def points_file():
+    """현재 연결된 로봇의 티칭 파일 경로 (시리얼 확인 전이면 None)"""
+    return os.path.expanduser(f"~/ur5e_points_{_robot_serial}.json") if _robot_serial else None
 
 
 def home_joints():
+    """현재 로봇에 저장된 'home' 관절값 [rad]. 없으면 None (다른 로봇 값을 대신 쓰지 않음)"""
     p = load_points().get("home")
-    return p["joints"] if p else HOME_JOINTS
+    return p["joints"] if p else None
 
 
 def rotvec_to_mat(r):
@@ -186,6 +203,8 @@ class Dashboard:
         self.lock = threading.Lock()
         self.mode = None      # POWER_OFF, IDLE, RUNNING ...
         self.safety = None    # NORMAL, PROTECTIVE_STOP, ...
+        self.serial = None    # 로봇 시리얼 (같은 IP의 다른 로봇 구분용)
+        self.changed_from = None  # 실행 중 로봇이 바뀌면 이전 시리얼 (GUI에서 알림 후 None으로)
         threading.Thread(target=self._poll, daemon=True).start()
 
     def cmd(self, c):
@@ -194,6 +213,14 @@ class Dashboard:
                 if self.sock is None:
                     self.sock = socket.create_connection((self.host, self.port), timeout=2.0)
                     self.sock.recv(1024)  # 환영 메시지
+                    # (재)연결할 때마다 시리얼 확인 → 랜선을 다른 로봇으로 바꿔 꽂아도 감지
+                    self.sock.sendall(b"get serial number\n")
+                    s = self.sock.recv(1024).decode().strip()
+                    if s and s != self.serial:
+                        if self.serial:
+                            self.changed_from = self.serial
+                        self.serial = s
+                        set_robot_serial(s)
                 self.sock.sendall((c + "\n").encode())
                 return self.sock.recv(1024).decode().strip()
             except OSError:
@@ -306,7 +333,7 @@ TIPS = {
     "하강 속도 [mm/s]": "접근점 → pick/place 직선 하강 속도. 정밀하게 놓으려면 낮게.",
     "그리퍼 힘 (0~255)": "파지력 (약 20~235N). 무른 물체는 낮게.",
     "그리퍼 속도 (0~255)": "손가락 닫힘/열림 속도.",
-    "📍 티칭 도구":"Freedrive로 손으로 위치를 잡고 이름 붙여 저장 / 저장 위치로 이동.\n저장 파일: ~/ur5e_points.json",
+    "📍 티칭 도구":"Freedrive로 손으로 위치를 잡고 이름 붙여 저장 / 저장 위치로 이동.\n저장 파일: ~/ur5e_points_<로봇 시리얼>.json (로봇별로 따로 저장)",
     "✋ Freedrive ON": "로봇을 손으로 끌어서 움직일 수 있게 합니다. 120초 후 자동 해제.\n"
                       "양손으로 천천히 움직이세요. 펜던트 설치의 페이로드(2F-85 약 0.9kg)가\n틀리면 손을 놓을 때 로봇이 처지거나 떠오릅니다.",
     "Freedrive OFF": "Freedrive 해제. 로봇이 현재 위치에 고정됩니다.\n(이동 명령을 보내도 자동 해제됨)",
@@ -373,7 +400,8 @@ UR5e 제어 GUI 사용 설명서
   2) [Freedrive OFF] → 메인 창 조그로 mm 단위 미세 조정
   3) 이름 입력 후 [💾 저장], 또는 빠른 저장 [pick] [place] [home]
   4) 목록에서 선택 → [▲ 접근점으로 이동] / [▶ 이 위치로 이동] 으로 확인
-  · 저장 파일: ~/ur5e_points.json  (관절값 rad, TCP m / rad, 그리퍼 POS)
+  · 저장 파일: ~/ur5e_points_<로봇 시리얼>.json  (로봇별 분리, 관절값 rad, TCP m / rad, 그리퍼 POS)
+    같은 IP의 다른 로봇을 연결하면 시리얼로 구분해 그 로봇의 티칭 위치만 사용합니다.
   · 'home'을 저장하면 메인 창 [원위치]가 그 값을 사용합니다.
   · Pick&Place 티칭 팁: pick/place는 '그리퍼를 닫으면 바로 잡히는 높이'로.
     접근점(위쪽)은 프로그램이 자동 계산합니다.
@@ -630,6 +658,7 @@ class App:
             ("로봇", "시리얼 번호", dq("get serial number")),
             ("로봇", "PolyScope (펌웨어)", dq("PolyscopeVersion")),
             ("로봇", "IP 주소", ROBOT_IP),
+            ("로봇", "티칭 파일", points_file() or "-"),
             ("로봇", "로봇 모드", dq("robotmode")),
             ("로봇", "안전 상태", dq("safetystatus")),
             ("로봇", "원격 제어 모드", dq("is in remote control")),
@@ -734,9 +763,16 @@ class App:
         sf = self.dash.safety
         self.safety_lbl.config(text=sf or "-", fg="white",
                                bg="#2e7d32" if sf == "NORMAL" else ("#757575" if sf is None else "#c62828"))
+        sn = self.dash.serial
+        self.root.title(f"UR5e MoveJ / MoveL  —  {ROBOT_IP}   S/N {sn or '확인 중...'}")
+        if self.dash.changed_from:
+            self.write_log(f"⚠ 로봇이 바뀌었습니다: S/N {self.dash.changed_from} → {sn}  "
+                           f"(티칭 위치도 {sn} 로봇 것으로 전환)")
+            self.dash.changed_from = None
+            self._loaded = False   # 입력칸을 새 로봇 현재값으로 다시 채움
         g = self.gripper.state
         if not g.get("connected"):
-            self.g_status.set("그리퍼: 연결 안 됨 (포트 63352)")
+            self.g_status.set("그리퍼: 없음 / 연결 안 됨 (Robotiq URCap 포트 63352 응답 없음)  —  팔 제어는 정상 사용 가능")
         elif g.get("STA") != 3:
             self.g_status.set(f"그리퍼: 활성화 필요 (STA={g.get('STA')})  ← [활성화] 누르면 한 번 완전히 열고 닫으며 초기화")
         else:
@@ -788,6 +824,8 @@ class App:
         self.g_for_lbl.set(f"{f}  (≈{20 + 215 * f / 255:.0f} N)")
 
     def grip_activate(self):
+        if not self.gripper.state.get("connected"):
+            self.write_log("[그리퍼] 이 로봇에는 그리퍼가 연결되어 있지 않습니다"); return
         self.gripper.activate()
         self.write_log("[그리퍼] 활성화 요청")
 
@@ -796,6 +834,8 @@ class App:
             spe = int(self.g_spe.get()); frc = int(self.g_for.get())
         except ValueError:
             self.write_log("[오류] 그리퍼 속도/힘은 0~255 정수"); return
+        if not self.gripper.state.get("connected"):
+            self.write_log("[그리퍼] 이 로봇에는 그리퍼가 연결되어 있지 않습니다"); return
         if self.gripper.state.get("STA") != 3:
             self.write_log("[그리퍼] 먼저 [활성화]를 누르세요"); return
         self.gripper.move(pos, spe, frc)
@@ -808,8 +848,14 @@ class App:
             self.j_mode.set("abs")
 
     def load_home(self):
-        self._fill(self.j_ent, [math.degrees(q) for q in home_joints()], "{:.3f}")
+        q = home_joints()
+        if q is None:
+            self.write_log(f"[원위치] 이 로봇(S/N {self.dash.serial})에 저장된 home이 없습니다 "
+                           "→ [📍 티칭 도구]에서 home 저장")
+            return False
+        self._fill(self.j_ent, [math.degrees(v) for v in q], "{:.3f}")
         self.j_mode.set("abs")
+        return True
 
     def load_pose(self):
         if self.node.tcp:
@@ -896,12 +942,15 @@ class App:
             self._mv_show("이동 중", "#1565c0", prog, f"{m['label']}  |  {rem_txt}  |  {now - m['t0']:.1f}초")
 
     def go_home(self):
-        deg = ", ".join(f"{math.degrees(q):.1f}" for q in home_joints())
-        if not messagebox.askyesno("원위치로 이동", f"원위치 [{deg}]° 로 이동합니다.\n"
+        q = home_joints()
+        if q is None:
+            self.load_home(); return     # 안내 로그만
+        deg = ", ".join(f"{math.degrees(v):.1f}" for v in q)
+        if not messagebox.askyesno("원위치로 이동", f"S/N {self.dash.serial} 의 원위치 [{deg}]° 로 이동합니다.\n"
                                    "경로에 사람/장애물이 없는지 확인하세요.\n계속할까요?"):
             return
-        self.load_home()
-        self.do_movej()
+        if self.load_home():
+            self.do_movej()
 
     def do_movej(self):
         try:
@@ -982,22 +1031,27 @@ class App:
         self.write_log(f"[속도] {int(f * 100)}%" if ok else "[오류] 속도 서비스 없음")
 
 
-POINTS_FILE = os.path.expanduser("~/ur5e_points.json")
-
-
 def load_points():
+    """현재 로봇(시리얼)의 티칭 위치. 시리얼 확인 전이거나 파일이 없으면 {}"""
+    f = points_file()
+    if not f:
+        return {}
     try:
-        with open(POINTS_FILE) as f:
-            return json.load(f).get("points", {})
+        with open(f) as fp:
+            return json.load(fp).get("points", {})
     except (OSError, ValueError):
         return {}
 
 
 def save_points(pts):
-    tmp = POINTS_FILE + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump({"version": 1, "robot": "UR5e", "points": pts}, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, POINTS_FILE)
+    f = points_file()
+    if not f:
+        raise RuntimeError("로봇 시리얼을 아직 확인하지 못해 저장할 수 없습니다 (Dashboard 연결 확인)")
+    tmp = f + ".tmp"
+    with open(tmp, "w") as fp:
+        json.dump({"version": 2, "robot": "UR5e", "serial": _robot_serial, "points": pts},
+                  fp, indent=2, ensure_ascii=False)
+    os.replace(tmp, f)
 
 
 class TeachWindow:
@@ -1007,6 +1061,7 @@ class TeachWindow:
     def __init__(self, app):
         self.app = app
         self.pts = load_points()
+        self.loaded_serial = robot_serial()
         self.win = win = tk.Toplevel(app.root)
         win.title("티칭 도구 - UR5e")
         win.geometry("+140+140")
@@ -1034,7 +1089,7 @@ class TeachWindow:
         ttk.Label(fs, textvariable=self.cur_lbl, width=52, anchor="w", foreground="#444").pack(side="left", padx=10)
 
         # 3. 목록
-        fl = ttk.LabelFrame(win, text=f"3. 저장된 위치   ({POINTS_FILE})", padding=8)
+        self.fl = fl = ttk.LabelFrame(win, text="3. 저장된 위치", padding=8)
         fl.pack(fill="both", expand=True, padx=8, pady=6)
         cols = (("name", "이름", 90), ("joints", "관절 [°]", 340), ("tcp", "TCP X, Y, Z [mm]", 190),
                 ("grip", "그리퍼", 60), ("time", "저장 시각", 150))
@@ -1078,6 +1133,8 @@ class TeachWindow:
         n = self.app.node
         if not name:
             messagebox.showinfo("이름", "저장할 이름을 입력하세요.", parent=self.win); return
+        if not robot_serial():
+            messagebox.showerror("오류", "로봇 시리얼을 아직 확인하지 못했습니다. 잠시 후 다시 시도하세요.", parent=self.win); return
         if not (n.joints and n.tcp):
             messagebox.showerror("오류", "로봇 상태를 받지 못했습니다. 드라이버를 확인하세요.", parent=self.win); return
         if name in self.pts and not messagebox.askyesno(
@@ -1175,6 +1232,10 @@ class TeachWindow:
         if n.joints and n.tcp:
             self.cur_lbl.set("현재: " + ", ".join(f"{math.degrees(q):.1f}" for q in n.joints) + "°   |   "
                              + ", ".join(f"{v * 1000:.0f}" for v in n.tcp[:3]) + " mm")
+        # 시리얼이 확인되거나 로봇이 바뀌면 그 로봇의 티칭 파일을 다시 읽음
+        if robot_serial() != self.loaded_serial:
+            self.pts = load_points(); self.loaded_serial = robot_serial(); self.refresh_list()
+        self.fl.config(text=f"3. 저장된 위치   S/N {robot_serial() or '확인 중'}   ({points_file() or '-'})")
         self.win.after(200, self.tick)
 
 
@@ -1256,12 +1317,15 @@ class PickPlaceWindow:
 
     def update_pts(self):
         pts = load_points()
+        self._pts_serial = robot_serial()
         miss = [k for k in ("home", "pick", "place") if k not in pts]
-        if miss:
-            self.pts_lbl.set(f"⚠ 티칭 위치 없음: {', '.join(miss)}  → [📍 티칭 도구]에서 저장하세요")
+        if not self.app.gripper.state.get("connected"):
+            self.pts_lbl.set(f"⚠ S/N {robot_serial() or '확인 중'}: 그리퍼가 연결되어 있지 않아 Pick & Place를 할 수 없습니다")
+        elif miss:
+            self.pts_lbl.set(f"⚠ S/N {robot_serial() or '확인 중'}: 티칭 위치 없음: {', '.join(miss)}  → [📍 티칭 도구]에서 저장하세요")
         else:
             f = lambda k: ", ".join(f"{v * 1000:.0f}" for v in pts[k]["tcp"][:3])
-            self.pts_lbl.set(f"pick [{f('pick')}] mm  →  place [{f('place')}] mm   (저장: {pts['place'].get('time', '')})")
+            self.pts_lbl.set(f"S/N {robot_serial()}:  pick [{f('pick')}] mm  →  place [{f('place')}] mm   (저장: {pts['place'].get('time', '')})")
         return pts, miss
 
     # ----- 실행 -----
@@ -1269,8 +1333,12 @@ class PickPlaceWindow:
         if self.thread and self.thread.is_alive():
             return
         pts, miss = self.update_pts()
+        if not self.app.gripper.state.get("connected"):
+            messagebox.showerror("Pick & Place", "이 로봇에는 그리퍼가 연결되어 있지 않습니다.\n(Robotiq URCap 포트 63352 응답 없음)",
+                                 parent=self.win); return
         if miss:
-            messagebox.showerror("Pick & Place", f"티칭 위치가 없습니다: {', '.join(miss)}", parent=self.win); return
+            messagebox.showerror("Pick & Place", f"이 로봇(S/N {robot_serial()})의 티칭 위치가 없습니다: {', '.join(miss)}",
+                                 parent=self.win); return
         try:
             v = {k: float(e.get()) for k, e in self.ent.items()}
         except ValueError:
@@ -1347,6 +1415,8 @@ class PickPlaceWindow:
                         self.set_step(self.cur, "✖", self.C_FAIL, bold=True)
                     self.set_state(f"✖ 중단: {msg}", self.C_FAIL)
                 self.app.write_log(f"[Pick&Place] {'완료' if ok else '중단: ' + msg}")
+        if robot_serial() != getattr(self, "_pts_serial", None) and not (self.thread and self.thread.is_alive()):
+            self.update_pts()
         self.win.after(100, self.poll)
 
 

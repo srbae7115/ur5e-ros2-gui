@@ -25,7 +25,7 @@ import numpy as np
 import rclpy
 
 from ur5e_move_gui import (URNode, Gripper, Dashboard, ROBOT_IP, load_points, fmt,
-                           rotvec_to_mat, rot_angle, POINTS_FILE)
+                           rotvec_to_mat, rot_angle, points_file, robot_serial)
 
 
 class Abort(Exception):
@@ -169,13 +169,19 @@ class PickPlace:
 
     # ---------- 전체 ----------
     def preflight(self, pts):
+        t0 = time.time()
+        while not (self.n.joints and self.n.tcp and self.dash.mode and self.dash.serial):
+            if time.time() - t0 > 5:
+                raise Abort("로봇 상태를 받지 못했습니다 (드라이버 실행 / 네트워크 확인)")
+            time.sleep(0.1)
+        sn = self.dash.serial
         for k in ("home", "pick", "place"):
             if k not in pts:
-                raise Abort(f"'{k}' 위치가 없습니다. 티칭 도구에서 저장하세요. ({POINTS_FILE})")
+                raise Abort(f"이 로봇(S/N {sn})의 '{k}' 위치가 없습니다. 티칭 도구에서 저장하세요.")
         t0 = time.time()
-        while not (self.n.joints and self.n.tcp and self.dash.mode and self.grip.state.get("connected")):
-            if time.time() - t0 > 5:
-                raise Abort("로봇/그리퍼 상태를 받지 못했습니다 (드라이버 실행 확인)")
+        while not self.grip.state.get("connected"):
+            if time.time() - t0 > 3:
+                raise Abort(f"이 로봇(S/N {sn})에는 그리퍼가 연결되어 있지 않습니다 (Robotiq URCap 포트 63352 응답 없음)")
             time.sleep(0.1)
         if self.dash.mode != "RUNNING":
             raise Abort(f"서보가 ON이 아닙니다 (모드: {self.dash.mode})")
@@ -247,7 +253,11 @@ def main():
     spin_th = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
     spin_th.start()
     pp = PickPlace(node, a)
+    t0 = time.time()
+    while not robot_serial() and time.time() - t0 < 5:   # 로봇 시리얼 확인 → 그 로봇의 티칭 파일 사용
+        time.sleep(0.1)
     pts = load_points()
+    pp.log(f"로봇 S/N {robot_serial() or '?'}  티칭 파일 {points_file() or '-'}")
     code = 0
     try:
         ok, _ = pp.run(pts)
